@@ -1,4 +1,4 @@
-# Tiny Language Scanner (Lexer) - Beginner Guide
+# Tiny Language Scanner (Lexer)
 
 This project is the **first phase of a compiler**.
 
@@ -124,18 +124,18 @@ Program entry point:
 
 ## 6) How to compile and run
 
-## Linux / macOS (with g++)
-
-```bash
-g++ -std=c++17 scanner.cpp -o scanner
-./scanner sample_input.tiny
-```
-
 ## Windows PowerShell (with g++)
 
 ```powershell
 g++ -std=c++17 scanner.cpp -o scanner.exe
 .\scanner.exe .\sample_input.tiny
+```
+
+## GUI
+
+```powershell
+g++ -std=c++17 gui\gui.cpp -mwindows -o gui\scanner_gui.exe -lcomctl32 -lcomdlg32
+.\gui\scanner_gui.exe
 ```
 
 ---
@@ -197,3 +197,24 @@ To continue building a full compiler, add these modules next:
 4. Semantic checks
 
 The current scanner class is intentionally simple so you can extend it step by step.
+
+---
+
+## 11) GUI (separate folder)
+
+A C++ Windows GUI is included in `gui/gui.cpp`.
+
+It is separate from the scanner code and does not change the scanner structure.
+
+GUI features:
+
+- source code editor (left)
+- token table (right): `Line`, `Col`, `Type`, `Lexeme`
+- buttons: `Open`, `Save`, `Scan`, `Clear`
+- status line for success/errors
+
+How it works:
+
+1. GUI writes editor text to a temporary `.tiny` file
+2. GUI runs `scanner.exe <temp-file>`
+3. GUI reads scanner output and fills the token table
