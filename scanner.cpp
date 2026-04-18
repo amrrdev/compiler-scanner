@@ -146,7 +146,7 @@ private:
 
         return makeToken(NUM, lexeme, startLine, startCol);
     }
-
+    // "amr"
     Token scanString() {
         int startLine = line_;
         int startCol = col_;
@@ -235,13 +235,31 @@ private:
             return makeToken(ASSIGNMENTOP, ":=", startLine, startCol);
         }
 
+        if (c == '<' && peekNext() == '=') {
+            advance();
+            advance();
+            return makeToken(COMPARISONOP, "<=", startLine, startCol);
+        }
+
+        if (c == '>' && peekNext() == '=') {
+            advance();
+            advance();
+            return makeToken(COMPARISONOP, ">=", startLine, startCol);
+        }
+
+        if (c == '!' && peekNext() == '=') {
+            advance();
+            advance();
+            return makeToken(COMPARISONOP, "!=", startLine, startCol);
+        }
+
         advance();
 
         if (c == '+') return makeToken(ADDOP, "+", startLine, startCol);
         if (c == '-') return makeToken(SUBOP, "-", startLine, startCol);
         if (c == '*') return makeToken(MULOP, "*", startLine, startCol);
         if (c == '/') return makeToken(DIVOP, "/", startLine, startCol);
-        if (c == '=' || c == '<') return makeToken(COMPARISONOP, std::string(1, c), startLine, startCol);
+        if (c == '=' || c == '<' || c == '>') return makeToken(COMPARISONOP, std::string(1, c), startLine, startCol);
         if (c == ';') return makeToken(SEMICOLON, ";", startLine, startCol);
         if (c == ',') return makeToken(COMMA, ",", startLine, startCol);
         if (c == '(' || c == ')') return makeToken(PUNCTUATION, std::string(1, c), startLine, startCol);

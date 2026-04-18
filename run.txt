@@ -1,0 +1,4 @@
+g++ -std=c++17 gui\gui.cpp -mwindows -o gui\scanner_gui.exe -lcomctl32 -lcomdlg32
+
+g++ -std=c++17 scanner.cpp -o scanner.exe
+.\scanner.exe .\factorial.tiny
