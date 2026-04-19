@@ -54,7 +54,7 @@ public:
             Token t = nextToken();
             tokens.push_back(t);
 
-            if (t.type == EOF_TOKEN || t.type == ERROR_TOKEN) {
+            if (t.type == EOF_TOKEN) {
                 break;
             }
         }
@@ -98,7 +98,7 @@ private:
 
         return c;
     }
-
+    // x=
     bool isLetter(char c) const {
         return std::isalpha(static_cast<unsigned char>(c)) != 0;
     }
@@ -122,7 +122,7 @@ private:
         if (word == "write") return WRITE_KW;
         return ID;
     }
-
+    // amr
     Token scanIdentifier() {
         int startLine = line_;
         int startCol = col_;
@@ -182,6 +182,14 @@ private:
 
                 while (!isAtEnd() && peek() != '}') {
                     if (peek() == '{') {
+                        // Consume nested opener and recover to the end of current comment.
+                        advance();
+                        while (!isAtEnd() && peek() != '}') {
+                            advance();
+                        }
+                        if (!isAtEnd()) {
+                            advance();
+                        }
                         errorToken = makeToken(ERROR_TOKEN, "nested comment", startLine, startCol);
                         return false;
                     }
