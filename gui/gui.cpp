@@ -18,7 +18,8 @@ enum {
     ID_BTN_CLEAR = 1004,
     ID_EDIT_SOURCE = 2001,
     ID_LIST_TOKENS = 2002,
-    ID_STATIC_STATUS = 2003
+    ID_STATIC_STATUS = 2003,
+    ID_EDIT_GRAMMAR = 2004
 };
 
 HWND gEdit = NULL;
@@ -29,6 +30,7 @@ HWND gBtnSave = NULL;
 HWND gBtnScan = NULL;
 HWND gBtnClear = NULL;
 HFONT gFont = NULL;
+HWND gGrammar = NULL;
 
 struct ParsedToken {
     std::string line;
@@ -58,20 +60,44 @@ std::string getExeDir() {
 }
 
 std::string findScannerPath() {
-    if (fileExists("scanner.exe")) {
-        return ".\\scanner.exe";
+    const std::string exeName = "scanner.exe";
+    if (fileExists(exeName)) {
+        return ".\\" + exeName;
     }
-    if (fileExists("..\\scanner.exe")) {
-        return "..\\scanner.exe";
+    if (fileExists("..\\" + exeName)) {
+        return "..\\" + exeName;
     }
 
     std::string exeDir = getExeDir();
-    std::string sameDir = exeDir + "\\scanner.exe";
+    std::string sameDir = exeDir + "\\" + exeName;
     if (fileExists(sameDir)) {
         return sameDir;
     }
 
-    std::string parentDir = exeDir + "\\..\\scanner.exe";
+    std::string parentDir = exeDir + "\\..\\" + exeName;
+    if (fileExists(parentDir)) {
+        return parentDir;
+    }
+
+    return "";
+}
+
+std::string findGrammarPath() {
+    const std::string exeName = "grammar.exe";
+    if (fileExists(exeName)) {
+        return ".\\" + exeName;
+    }
+    if (fileExists("..\\" + exeName)) {
+        return "..\\" + exeName;
+    }
+
+    std::string exeDir = getExeDir();
+    std::string sameDir = exeDir + "\\" + exeName;
+    if (fileExists(sameDir)) {
+        return sameDir;
+    }
+
+    std::string parentDir = exeDir + "\\..\\" + exeName;
     if (fileExists(parentDir)) {
         return parentDir;
     }
@@ -92,6 +118,24 @@ std::string getEditText(HWND hEdit) {
 
 void setStatus(const std::string& s) {
     SetWindowTextA(gStatus, s.c_str());
+}
+
+void setGrammarOutput(const std::string& s) {
+    SetWindowTextA(gGrammar, s.c_str());
+}
+
+std::string trimTrailingNewlines(std::string text) {
+    while (!text.empty() && (text.back() == '\n' || text.back() == '\r')) {
+        text.pop_back();
+    }
+    return text;
+}
+
+std::string buildCombinedOutput(const std::string& grammarOut) {
+    std::ostringstream oss;
+    oss << "===== GRAMMAR OUTPUT =====";
+    oss << "\r\n" << trimTrailingNewlines(grammarOut);
+    return oss.str();
 }
 
 void clearTokenList() {
@@ -180,8 +224,26 @@ bool writeTempInput(const std::string& text, std::string& tempPathOut) {
     return true;
 }
 
+bool runProcessCapture(const std::string& exePath, const std::string& inputPath, std::string& output, int& exitCode) {
+    std::string command = "cmd /C \"\"" + exePath + "\" \"" + inputPath + "\" 2>&1\"";
+    FILE* pipe = _popen(command.c_str(), "r");
+    if (!pipe) {
+        return false;
+    }
+
+    output.clear();
+    char buffer[2048];
+    while (fgets(buffer, sizeof(buffer), pipe) != NULL) {
+        output += buffer;
+    }
+
+    exitCode = _pclose(pipe);
+    return true;
+}
+
 void runScan() {
     clearTokenList();
+    setGrammarOutput("");
 
     std::string source = getEditText(gEdit);
     if (source.empty()) {
@@ -194,6 +256,11 @@ void runScan() {
         setStatus("scanner.exe not found. Build scanner first.");
         return;
     }
+    std::string grammarPath = findGrammarPath();
+    if (grammarPath.empty()) {
+        setStatus("grammar.exe not found. Build grammar first.");
+        return;
+    }
 
     std::string tempPath;
     if (!writeTempInput(source, tempPath)) {
@@ -201,19 +268,38 @@ void runScan() {
         return;
     }
 
-    std::string command = "cmd /C \"\"" + scannerPath + "\" \"" + tempPath + "\"\"";
-    FILE* pipe = _popen(command.c_str(), "r");
-    if (!pipe) {
-        setStatus("Failed to run scanner process.");
+    std::string grammarOut;
+    int grammarExitCode = 0;
+    if (!runProcessCapture(grammarPath, tempPath, grammarOut, grammarExitCode)) {
+        setStatus("Failed to run grammar process.");
+        DeleteFileA(tempPath.c_str());
         return;
     }
 
-    char buffer[2048];
+    if (grammarOut.empty()) {
+        grammarOut = "(no grammar output)";
+    }
+
+    setGrammarOutput(buildCombinedOutput(grammarOut));
+    RedrawWindow(gGrammar, NULL, NULL, RDW_INVALIDATE | RDW_UPDATENOW);
+
+    std::string scanOut;
+    int scanExitCode = 0;
+    if (!runProcessCapture(scannerPath, tempPath, scanOut, scanExitCode)) {
+        std::ostringstream oss;
+        oss << "Grammar shown. Failed to run scanner process.";
+        if (grammarExitCode != 0) {
+            oss << " (grammar exit code: " << grammarExitCode << ")";
+        }
+        setStatus(oss.str());
+        DeleteFileA(tempPath.c_str());
+        return;
+    }
     std::vector<ParsedToken> tokens;
     bool parseError = false;
-
-    while (fgets(buffer, sizeof(buffer), pipe) != NULL) {
-        std::string line(buffer);
+    std::istringstream scanStream(scanOut);
+    std::string line;
+    while (std::getline(scanStream, line)) {
         while (!line.empty() && (line.back() == '\n' || line.back() == '\r')) {
             line.pop_back();
         }
@@ -230,42 +316,75 @@ void runScan() {
         }
     }
 
-    int exitCode = _pclose(pipe);
-    DeleteFileA(tempPath.c_str());
-
     for (int i = 0; i < static_cast<int>(tokens.size()); i++) {
         addTokenToList(tokens[i], i);
     }
 
-    if (exitCode == -1) {
-        setStatus("Failed to close scanner process.");
+    if (scanExitCode == -1) {
+        std::ostringstream oss;
+        oss << "Grammar shown. Failed to close scanner process.";
+        if (grammarExitCode != 0) {
+            oss << " (grammar exit code: " << grammarExitCode << ")";
+        }
+        setStatus(oss.str());
+        DeleteFileA(tempPath.c_str());
         return;
     }
 
-    if (exitCode != 0) {
-        setStatus("Scanner returned a non-zero exit code.");
+    if (scanExitCode != 0) {
+        std::ostringstream oss;
+        oss << "Grammar shown. Scanner returned a non-zero exit code.";
+        if (grammarExitCode != 0) {
+            oss << " (grammar exit code: " << grammarExitCode << ")";
+        }
+        setStatus(oss.str());
+        DeleteFileA(tempPath.c_str());
         return;
     }
 
     if (tokens.empty()) {
-        setStatus("Scanner produced no output. Check scanner.exe path/output format.");
+        std::ostringstream oss;
+        oss << "Grammar shown. Scanner produced no output.";
+        if (grammarExitCode != 0) {
+            oss << " (grammar exit code: " << grammarExitCode << ")";
+        }
+        setStatus(oss.str());
+        DeleteFileA(tempPath.c_str());
         return;
     }
 
     for (std::size_t i = 0; i < tokens.size(); i++) {
         if (tokens[i].type == "ERROR") {
-            setStatus("Lexical error at line " + tokens[i].line + ", col " + tokens[i].col + ".");
+            std::ostringstream oss;
+            oss << "Grammar shown. Lexical error at line " << tokens[i].line
+                << ", col " << tokens[i].col << ".";
+            if (grammarExitCode != 0) {
+                oss << " (grammar exit code: " << grammarExitCode << ")";
+            }
+            setStatus(oss.str());
+            DeleteFileA(tempPath.c_str());
             return;
         }
     }
 
     if (parseError) {
-        setStatus("Scan done, but some output lines could not be parsed.");
+        std::ostringstream oss;
+        oss << "Grammar shown. Scan done, but some output lines could not be parsed.";
+        if (grammarExitCode != 0) {
+            oss << " (grammar exit code: " << grammarExitCode << ")";
+        }
+        setStatus(oss.str());
+        DeleteFileA(tempPath.c_str());
         return;
     }
 
+    DeleteFileA(tempPath.c_str());
+
     std::ostringstream oss;
-    oss << "Scan complete. Tokens: " << tokens.size();
+    oss << "Grammar shown. Scan complete. Tokens: " << tokens.size();
+    if (grammarExitCode != 0) {
+        oss << " (grammar exit code: " << grammarExitCode << ")";
+    }
     setStatus(oss.str());
 }
 
@@ -353,9 +472,13 @@ void createControls(HWND hWnd) {
     gList = CreateWindowExA(WS_EX_CLIENTEDGE, WC_LISTVIEWA, "",
                             WS_CHILD | WS_VISIBLE | LVS_REPORT | LVS_SINGLESEL,
                             450, 50, 520, 400, hWnd, (HMENU)ID_LIST_TOKENS, NULL, NULL);
+    gGrammar = CreateWindowExA(WS_EX_CLIENTEDGE, "EDIT", "",
+                               WS_CHILD | WS_VISIBLE | ES_MULTILINE | ES_AUTOVSCROLL |
+                               ES_READONLY | WS_VSCROLL,
+                               10, 460, 960, 80, hWnd, (HMENU)ID_EDIT_GRAMMAR, NULL, NULL);
 
     gStatus = CreateWindowA("STATIC", "Ready.", WS_CHILD | WS_VISIBLE | SS_LEFT,
-                            10, 460, 960, 24, hWnd, (HMENU)ID_STATIC_STATUS, NULL, NULL);
+                            10, 550, 960, 24, hWnd, (HMENU)ID_STATIC_STATUS, NULL, NULL);
 
     insertListColumnA(gList, 0, 60, "Line");
     insertListColumnA(gList, 1, 60, "Col");
@@ -372,6 +495,7 @@ void createControls(HWND hWnd) {
     applyFont(gBtnClear);
     applyFont(gEdit);
     applyFont(gList);
+    applyFont(gGrammar);
     applyFont(gStatus);
 }
 
@@ -384,9 +508,10 @@ void resizeControls(HWND hWnd) {
 
     int margin = 10;
     int topBarH = 30;
+    int grammarH = 80;
     int statusH = 24;
     int contentTop = margin + topBarH + 10;
-    int contentBottom = height - margin - statusH - 10;
+    int contentBottom = height - margin - statusH - grammarH - 20;
     int contentH = contentBottom - contentTop;
 
     int leftW = (width - 3 * margin) * 45 / 100;
@@ -399,6 +524,7 @@ void resizeControls(HWND hWnd) {
 
     MoveWindow(gEdit, margin, contentTop, leftW, contentH, TRUE);
     MoveWindow(gList, margin + leftW + margin, contentTop, rightW, contentH, TRUE);
+    MoveWindow(gGrammar, margin, contentBottom + 10, width - 2 * margin, grammarH, TRUE);
     MoveWindow(gStatus, margin, height - margin - statusH, width - 2 * margin, statusH, TRUE);
 }
 
@@ -423,6 +549,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             } else if (id == ID_BTN_CLEAR) {
                 SetWindowTextA(gEdit, "");
                 clearTokenList();
+                setGrammarOutput("");
                 setStatus("Cleared.");
             }
             return 0;

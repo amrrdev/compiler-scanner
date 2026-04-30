@@ -1,0 +1,7 @@
+{ Tiny program with a syntax error }
+
+read x;
+if x < 10
+    write x
+end
+

@@ -1,2 +1,14 @@
-read city=10+D#8; {read}
-ss,tt :=8;
+{ Compute factorial of a number }
+
+read n;
+fact := 1;
+
+if n = 0 then
+    write "Factorial is", fact
+else
+    repeat
+        fact := fact * n;
+        n := n - 1
+    until n = 0;
+    write "Factorial is", fact
+end

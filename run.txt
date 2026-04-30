@@ -1,4 +1,7 @@
-g++ -std=c++17 gui\gui.cpp -mwindows -o gui\scanner_gui.exe -lcomctl32 -lcomdlg32
-
 g++ -std=c++17 scanner.cpp -o scanner.exe
-.\scanner.exe .\factorial.tiny
+g++ -std=c++17 grammar.cpp -o grammar.exe
+g++ -std=c++17 gui\gui.cpp -o gui\scanner_gui.exe -mwindows -lcomctl32 -lcomdlg32
+
+.\scanner.exe .\tiny\factorial.tiny
+.\grammar.exe .\tiny\factorial.tiny
+.\gui\scanner_gui.exe
