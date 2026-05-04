@@ -3,12 +3,12 @@
 read n;
 fact := 1;
 
-if n = 0 then
-    write "Factorial is", fact
+if n < 1 then
+    write fact
 else
     repeat
         fact := fact * n;
         n := n - 1
     until n = 0;
-    write "Factorial is", fact
+    write fact
 end

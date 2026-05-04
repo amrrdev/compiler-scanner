@@ -2,9 +2,12 @@
 #include <commctrl.h>
 #include <commdlg.h>
 
+#include "..\\tiny_core.h"
+
 #include <cstdio>
 #include <fstream>
 #include <sstream>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -31,79 +34,6 @@ HWND gBtnScan = NULL;
 HWND gBtnClear = NULL;
 HFONT gFont = NULL;
 HWND gGrammar = NULL;
-
-struct ParsedToken {
-    std::string line;
-    std::string col;
-    std::string type;
-    std::string lexeme;
-};
-
-bool fileExists(const std::string& path) {
-    DWORD attrs = GetFileAttributesA(path.c_str());
-    return attrs != INVALID_FILE_ATTRIBUTES && !(attrs & FILE_ATTRIBUTE_DIRECTORY);
-}
-
-std::string getExeDir() {
-    char path[MAX_PATH];
-    DWORD len = GetModuleFileNameA(NULL, path, MAX_PATH);
-    if (len == 0 || len == MAX_PATH) {
-        return ".";
-    }
-
-    std::string full(path);
-    std::size_t pos = full.find_last_of("\\/");
-    if (pos == std::string::npos) {
-        return ".";
-    }
-    return full.substr(0, pos);
-}
-
-std::string findScannerPath() {
-    const std::string exeName = "scanner.exe";
-    if (fileExists(exeName)) {
-        return ".\\" + exeName;
-    }
-    if (fileExists("..\\" + exeName)) {
-        return "..\\" + exeName;
-    }
-
-    std::string exeDir = getExeDir();
-    std::string sameDir = exeDir + "\\" + exeName;
-    if (fileExists(sameDir)) {
-        return sameDir;
-    }
-
-    std::string parentDir = exeDir + "\\..\\" + exeName;
-    if (fileExists(parentDir)) {
-        return parentDir;
-    }
-
-    return "";
-}
-
-std::string findGrammarPath() {
-    const std::string exeName = "grammar.exe";
-    if (fileExists(exeName)) {
-        return ".\\" + exeName;
-    }
-    if (fileExists("..\\" + exeName)) {
-        return "..\\" + exeName;
-    }
-
-    std::string exeDir = getExeDir();
-    std::string sameDir = exeDir + "\\" + exeName;
-    if (fileExists(sameDir)) {
-        return sameDir;
-    }
-
-    std::string parentDir = exeDir + "\\..\\" + exeName;
-    if (fileExists(parentDir)) {
-        return parentDir;
-    }
-
-    return "";
-}
 
 std::string getEditText(HWND hEdit) {
     int len = GetWindowTextLengthA(hEdit);
@@ -133,9 +63,24 @@ std::string trimTrailingNewlines(std::string text) {
 
 std::string buildCombinedOutput(const std::string& grammarOut) {
     std::ostringstream oss;
-    oss << "===== GRAMMAR OUTPUT =====";
+    oss << "===== STANDARD TINY ANALYSIS =====";
     oss << "\r\n" << trimTrailingNewlines(grammarOut);
     return oss.str();
+}
+
+std::vector<Token> buildParserTokens(const std::vector<Token>& tokens) {
+    std::vector<Token> parserTokens;
+    for (std::size_t i = 0; i < tokens.size(); i++) {
+        if (!isErrorToken(tokens[i])) {
+            parserTokens.push_back(tokens[i]);
+        }
+    }
+
+    if (parserTokens.empty() || parserTokens.back().type != EOF_TOKEN) {
+        parserTokens.push_back(Token(EOF_TOKEN, "", 1, 1));
+    }
+
+    return parserTokens;
 }
 
 void clearTokenList() {
@@ -170,75 +115,131 @@ void insertListColumnA(HWND list, int columnIndex, int width, const char* title)
     SendMessageA(list, LVM_INSERTCOLUMNA, static_cast<WPARAM>(columnIndex), reinterpret_cast<LPARAM>(&col));
 }
 
-void addTokenToList(const ParsedToken& t, int index) {
-    int row = insertListItemA(gList, index, t.line);
+void addTokenToList(const Token& token, int index) {
+    int row = insertListItemA(gList, index, std::to_string(token.line));
 
-    setListItemTextA(gList, row, 1, t.col);
-    setListItemTextA(gList, row, 2, t.type);
-    setListItemTextA(gList, row, 3, t.lexeme);
+    setListItemTextA(gList, row, 1, std::to_string(token.col));
+    setListItemTextA(gList, row, 2, tokenTypeName(token.type));
+    setListItemTextA(gList, row, 3, token.lexeme);
 }
 
-bool parseTokenLine(const std::string& line, ParsedToken& out) {
-    std::size_t p1 = line.find("  ");
-    if (p1 == std::string::npos) {
-        return false;
+int countVisibleTokens(const std::vector<Token>& tokens) {
+    if (!tokens.empty() && tokens.back().type == EOF_TOKEN) {
+        return static_cast<int>(tokens.size()) - 1;
     }
-
-    std::size_t p2 = line.find("  ", p1 + 2);
-    if (p2 == std::string::npos) {
-        p2 = line.size();
-    }
-
-    std::string loc = line.substr(0, p1);
-    std::string type = line.substr(p1 + 2, p2 - (p1 + 2));
-    std::string lexeme = "";
-    if (p2 + 2 <= line.size()) {
-        lexeme = line.substr(p2 + 2);
-    }
-
-    std::size_t colon = loc.find(':');
-    if (colon == std::string::npos) {
-        return false;
-    }
-
-    out.line = loc.substr(0, colon);
-    out.col = loc.substr(colon + 1);
-    out.type = type;
-    out.lexeme = lexeme;
-    return true;
+    return static_cast<int>(tokens.size());
 }
 
-bool writeTempInput(const std::string& text, std::string& tempPathOut) {
-    char tempDir[MAX_PATH];
-    DWORD len = GetTempPathA(MAX_PATH, tempDir);
-    if (len == 0 || len > MAX_PATH) {
-        return false;
-    }
-
-    tempPathOut = std::string(tempDir) + "tiny_gui_input.tiny";
-    std::ofstream out(tempPathOut.c_str(), std::ios::binary);
-    if (!out) {
-        return false;
-    }
-    out << text;
-    return true;
+void clearEditorSelection() {
+    SendMessageA(gEdit, EM_SETSEL, 0, 0);
 }
 
-bool runProcessCapture(const std::string& exePath, const std::string& inputPath, std::string& output, int& exitCode) {
-    std::string command = "cmd /C \"\"" + exePath + "\" \"" + inputPath + "\" 2>&1\"";
-    FILE* pipe = _popen(command.c_str(), "r");
-    if (!pipe) {
-        return false;
+void focusErrorLocation(int line, int col) {
+    if (line < 1 || col < 1) {
+        return;
     }
 
-    output.clear();
-    char buffer[2048];
-    while (fgets(buffer, sizeof(buffer), pipe) != NULL) {
-        output += buffer;
+    LRESULT lineIndex = SendMessageA(gEdit, EM_LINEINDEX, static_cast<WPARAM>(line - 1), 0);
+    if (lineIndex < 0) {
+        return;
     }
 
-    exitCode = _pclose(pipe);
-    return true;
+    int start = static_cast<int>(lineIndex);
+    int lineLength = static_cast<int>(SendMessageA(gEdit, EM_LINELENGTH, static_cast<WPARAM>(start), 0));
+    int offset = col - 1;
+    if (offset < 0) {
+        offset = 0;
+    }
+    if (offset > lineLength) {
+        offset = lineLength;
+    }
+
+    int position = start + offset;
+    SendMessageA(gEdit, EM_SETSEL, static_cast<WPARAM>(position), static_cast<LPARAM>(position + 1));
+    SendMessageA(gEdit, EM_SCROLLCARET, 0, 0);
+    SetFocus(gEdit);
+}
+
+std::string buildAnalysisText(const std::string& result) {
+    return buildCombinedOutput(result);
+}
+
+std::string findLexicalErrorText(const std::vector<Token>& tokens, int& line, int& col) {
+    for (std::size_t i = 0; i < tokens.size(); i++) {
+        if (isErrorToken(tokens[i])) {
+            line = tokens[i].line;
+            col = tokens[i].col;
+            return formatLexicalError(tokens[i]);
+        }
+    }
+
+    line = 0;
+    col = 0;
+    return "";
+}
+
+std::string buildLexicalErrorsText(const std::vector<Token>& tokens, int& firstLine, int& firstCol) {
+    std::ostringstream oss;
+    bool found = false;
+
+    for (std::size_t i = 0; i < tokens.size(); i++) {
+        if (!isErrorToken(tokens[i])) {
+            continue;
+        }
+
+        if (!found) {
+            firstLine = tokens[i].line;
+            firstCol = tokens[i].col;
+            found = true;
+        } else {
+            oss << "\r\n";
+        }
+
+        oss << formatLexicalError(tokens[i]);
+    }
+
+    if (!found) {
+        firstLine = 0;
+        firstCol = 0;
+        return "";
+    }
+
+    return oss.str();
+}
+
+std::string buildSyntaxErrorsTextSkippingLexicalLines(const Parser& parser,
+                                                      const std::vector<Token>& tokens,
+                                                      bool& hasSyntaxErrors) {
+    std::set<int> lexicalLines;
+    for (std::size_t i = 0; i < tokens.size(); i++) {
+        if (isErrorToken(tokens[i])) {
+            lexicalLines.insert(tokens[i].line);
+        }
+    }
+
+    std::ostringstream oss;
+    bool wroteAny = false;
+    for (std::size_t i = 0; i < parser.errors.size(); i++) {
+        const ParseError& error = parser.errors[i];
+        if (lexicalLines.find(error.line) != lexicalLines.end()) {
+            continue;
+        }
+
+        if (wroteAny) {
+            oss << "\r\n";
+        }
+
+        oss << "Syntax error at line " << error.line
+            << ", col " << error.col << ": " << error.message;
+        if (!error.lexeme.empty()) {
+            oss << " (found: '" << error.lexeme << "')";
+        }
+
+        wroteAny = true;
+    }
+
+    hasSyntaxErrors = wroteAny;
+    return oss.str();
 }
 
 void runScan() {
@@ -251,141 +252,52 @@ void runScan() {
         return;
     }
 
-    std::string scannerPath = findScannerPath();
-    if (scannerPath.empty()) {
-        setStatus("scanner.exe not found. Build scanner first.");
-        return;
-    }
-    std::string grammarPath = findGrammarPath();
-    if (grammarPath.empty()) {
-        setStatus("grammar.exe not found. Build grammar first.");
-        return;
-    }
-
-    std::string tempPath;
-    if (!writeTempInput(source, tempPath)) {
-        setStatus("Failed to write temp input file.");
-        return;
-    }
-
-    std::string grammarOut;
-    int grammarExitCode = 0;
-    if (!runProcessCapture(grammarPath, tempPath, grammarOut, grammarExitCode)) {
-        setStatus("Failed to run grammar process.");
-        DeleteFileA(tempPath.c_str());
-        return;
-    }
-
-    if (grammarOut.empty()) {
-        grammarOut = "(no grammar output)";
-    }
-
-    setGrammarOutput(buildCombinedOutput(grammarOut));
-    RedrawWindow(gGrammar, NULL, NULL, RDW_INVALIDATE | RDW_UPDATENOW);
-
-    std::string scanOut;
-    int scanExitCode = 0;
-    if (!runProcessCapture(scannerPath, tempPath, scanOut, scanExitCode)) {
-        std::ostringstream oss;
-        oss << "Grammar shown. Failed to run scanner process.";
-        if (grammarExitCode != 0) {
-            oss << " (grammar exit code: " << grammarExitCode << ")";
-        }
-        setStatus(oss.str());
-        DeleteFileA(tempPath.c_str());
-        return;
-    }
-    std::vector<ParsedToken> tokens;
-    bool parseError = false;
-    std::istringstream scanStream(scanOut);
-    std::string line;
-    while (std::getline(scanStream, line)) {
-        while (!line.empty() && (line.back() == '\n' || line.back() == '\r')) {
-            line.pop_back();
-        }
-
-        if (line.empty()) {
-            continue;
-        }
-
-        ParsedToken t;
-        if (parseTokenLine(line, t)) {
-            tokens.push_back(t);
-        } else {
-            parseError = true;
-        }
-    }
+    Lexer lexer(source);
+    std::vector<Token> tokens = lexer.scanAll();
 
     for (int i = 0; i < static_cast<int>(tokens.size()); i++) {
         addTokenToList(tokens[i], i);
     }
 
-    if (scanExitCode == -1) {
-        std::ostringstream oss;
-        oss << "Grammar shown. Failed to close scanner process.";
-        if (grammarExitCode != 0) {
-            oss << " (grammar exit code: " << grammarExitCode << ")";
-        }
-        setStatus(oss.str());
-        DeleteFileA(tempPath.c_str());
-        return;
-    }
-
-    if (scanExitCode != 0) {
-        std::ostringstream oss;
-        oss << "Grammar shown. Scanner returned a non-zero exit code.";
-        if (grammarExitCode != 0) {
-            oss << " (grammar exit code: " << grammarExitCode << ")";
-        }
-        setStatus(oss.str());
-        DeleteFileA(tempPath.c_str());
-        return;
-    }
-
     if (tokens.empty()) {
-        std::ostringstream oss;
-        oss << "Grammar shown. Scanner produced no output.";
-        if (grammarExitCode != 0) {
-            oss << " (grammar exit code: " << grammarExitCode << ")";
-        }
-        setStatus(oss.str());
-        DeleteFileA(tempPath.c_str());
+        setStatus("No tokens were produced.");
         return;
     }
 
-    for (std::size_t i = 0; i < tokens.size(); i++) {
-        if (tokens[i].type == "ERROR") {
-            std::ostringstream oss;
-            oss << "Grammar shown. Lexical error at line " << tokens[i].line
-                << ", col " << tokens[i].col << ".";
-            if (grammarExitCode != 0) {
-                oss << " (grammar exit code: " << grammarExitCode << ")";
-            }
-            setStatus(oss.str());
-            DeleteFileA(tempPath.c_str());
-            return;
-        }
+    int lexicalLine = 0;
+    int lexicalCol = 0;
+    std::string lexicalErrors = buildLexicalErrorsText(tokens, lexicalLine, lexicalCol);
+    bool hasLexicalErrors = !lexicalErrors.empty();
+
+    std::vector<Token> parserTokens = buildParserTokens(tokens);
+    Parser parser(parserTokens);
+    parser.parse();
+    bool hasSyntaxError = false;
+    std::string syntaxError = buildSyntaxErrorsTextSkippingLexicalLines(parser, tokens, hasSyntaxError);
+
+    std::ostringstream analysis;
+    if (hasLexicalErrors && hasSyntaxError) {
+        analysis << "[Lexical]\r\n" << lexicalErrors << "\r\n\r\n";
+        analysis << "[Syntax]\r\n" << syntaxError;
+        setStatus("Lexical and syntax errors found.");
+        focusErrorLocation(lexicalLine, lexicalCol);
+    } else if (hasLexicalErrors) {
+        analysis << "[Lexical]\r\n" << lexicalErrors;
+        setStatus("Lexical error(s) found.");
+        focusErrorLocation(lexicalLine, lexicalCol);
+    } else if (hasSyntaxError) {
+        analysis << "[Syntax]\r\n" << syntaxError;
+        setStatus("Syntax error(s) found.");
+        focusErrorLocation(parser.errorLine, parser.errorCol);
+    } else {
+        clearEditorSelection();
+        analysis << "OK - Valid Tiny program";
+        std::ostringstream status;
+        status << "Valid Tiny program. Tokens: " << countVisibleTokens(tokens);
+        setStatus(status.str());
     }
 
-    if (parseError) {
-        std::ostringstream oss;
-        oss << "Grammar shown. Scan done, but some output lines could not be parsed.";
-        if (grammarExitCode != 0) {
-            oss << " (grammar exit code: " << grammarExitCode << ")";
-        }
-        setStatus(oss.str());
-        DeleteFileA(tempPath.c_str());
-        return;
-    }
-
-    DeleteFileA(tempPath.c_str());
-
-    std::ostringstream oss;
-    oss << "Grammar shown. Scan complete. Tokens: " << tokens.size();
-    if (grammarExitCode != 0) {
-        oss << " (grammar exit code: " << grammarExitCode << ")";
-    }
-    setStatus(oss.str());
+    setGrammarOutput(buildAnalysisText(analysis.str()));
 }
 
 void openFileDialog(HWND hWnd) {
@@ -475,9 +387,9 @@ void createControls(HWND hWnd) {
     gGrammar = CreateWindowExA(WS_EX_CLIENTEDGE, "EDIT", "",
                                WS_CHILD | WS_VISIBLE | ES_MULTILINE | ES_AUTOVSCROLL |
                                ES_READONLY | WS_VSCROLL,
-                               10, 460, 960, 80, hWnd, (HMENU)ID_EDIT_GRAMMAR, NULL, NULL);
+                               10, 370, 960, 170, hWnd, (HMENU)ID_EDIT_GRAMMAR, NULL, NULL);
 
-    gStatus = CreateWindowA("STATIC", "Ready.", WS_CHILD | WS_VISIBLE | SS_LEFT,
+    gStatus = CreateWindowA("STATIC", "Ready. Normal Tiny grammar.", WS_CHILD | WS_VISIBLE | SS_LEFT,
                             10, 550, 960, 24, hWnd, (HMENU)ID_STATIC_STATUS, NULL, NULL);
 
     insertListColumnA(gList, 0, 60, "Line");
@@ -508,8 +420,8 @@ void resizeControls(HWND hWnd) {
 
     int margin = 10;
     int topBarH = 30;
-    int grammarH = 80;
-    int statusH = 24;
+    int grammarH = 170;
+    int statusH = 26;
     int contentTop = margin + topBarH + 10;
     int contentBottom = height - margin - statusH - grammarH - 20;
     int contentH = contentBottom - contentTop;

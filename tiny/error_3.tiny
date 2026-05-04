@@ -1,0 +1,8 @@
+{ Error: 'def' is not a keyword, ':' is not ':=', and '!' is invalid }
+def function(x)
+  if x != 0 [
+    write x;
+    @ result := x % 2;
+    return result
+  ]
+end

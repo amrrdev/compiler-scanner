@@ -1,0 +1,6 @@
+{ Mixed Error Test }
+read 10;            { Syntax Error: Expected ID but found NUMBER }
+x := 5 @ 2;         { Lexical Error: @ is invalid }
+y := ;              { Syntax Error: Expected factor after := }
+write x + % y       { Lexical Error: % is invalid }
+{ Syntax Error: Missing ';' before 'write' }
